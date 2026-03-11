@@ -32,6 +32,8 @@ import (
 	"text/template"
 	"time"
 
+	"golang.org/x/exp/slices"
+
 	buildpkg "github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/upgrade"
 	"sigs.k8s.io/yaml"
@@ -39,6 +41,7 @@ import (
 
 var (
 	goarch        string
+	goArchFlag    string
 	goos          string
 	noupgrade     bool
 	version       string
@@ -364,6 +367,7 @@ func runCommand(cmd string, target target) {
 
 func parseFlags() {
 	flag.StringVar(&goarch, "goarch", runtime.GOARCH, "GOARCH")
+	flag.StringVar(&goArchFlag, "goarchflag", "", "Go architecture flags. E.g. GO386, GOAMD64, GOARM, GOARM64, etc.")
 	flag.StringVar(&goos, "goos", runtime.GOOS, "GOOS")
 	flag.StringVar(&goCmd, "gocmd", "go", "Specify `go` command")
 	flag.BoolVar(&noupgrade, "no-upgrade", noupgrade, "Disable upgrade functionality")
@@ -510,9 +514,56 @@ func build(target target, tags []string) {
 	runPrint(goCmd, args...)
 }
 
+func checkValidArchForFlag() bool {
+	validArchFlagArchs := []string{"386", "amd64", "arm", "arm64", "mips", "mipsle", "mips64", "mipsle64", "ppc64", "ppc64le", "riscv64", "wasm"}
+
+	return goarch != "" && slices.Contains(validArchFlagArchs, goarch) && goArchFlag != ""
+}
+
+func saveArchFlagToEnv(envName string) {
+	_, isCurrentlySet := os.LookupEnv(envName)
+
+	if isCurrentlySet {
+		log.Fatalf("Trying to override %s. Please unset %s variable or unset goarchflag parameter.", envName)
+	}
+
+	os.Setenv(envName, goArchFlag)
+}
+
+func setArchFlag() {
+	switch goarch {
+	case "386":
+		saveArchFlagToEnv("GO386")
+	case "amd64":
+		saveArchFlagToEnv("GOAMD64")
+	case "arm":
+		saveArchFlagToEnv("GOARM")
+	case "arm64":
+		saveArchFlagToEnv("GOARM64")
+	case "mips":
+	case "mipsle":
+		saveArchFlagToEnv("GOMIPS")
+	case "mips64":
+	case "mipsle64":
+		saveArchFlagToEnv("GOMIPS64")
+	case "ppc64":
+	case "ppc64le":
+		saveArchFlagToEnv("GOPPC64")
+	case "riscv64":
+		saveArchFlagToEnv("GORISCV64")
+	case "wasm":
+		saveArchFlagToEnv("GOWASM")
+	}
+}
+
 func setBuildEnvVars() {
 	os.Setenv("GOOS", goos)
 	os.Setenv("GOARCH", goarch)
+
+	if checkValidArchForFlag() {
+		setArchFlag()
+	}
+
 	os.Setenv("CC", cc)
 }
 
@@ -1100,7 +1151,14 @@ func buildArch() string {
 	if os == "darwin" {
 		os = "macos"
 	}
-	return fmt.Sprintf("%s-%s", os, goarch)
+
+	archName := goarch
+
+	if goArchFlag != "" {
+		archName = fmt.Sprintf("%s-%s", goarch, goArchFlag)
+	}
+
+	return fmt.Sprintf("%s-%s", os, archName)
 }
 
 func archiveName(target target) string {
